@@ -740,6 +740,8 @@ func MutateHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	glog.Infof("mutation request received for pod %s/%s", pod.Namespace, pod.Name)
+
 	userDefinedPatch, err := createCustomizedPatch(pod)
 	if err != nil {
 		glog.Warningf("Error, failed to create user-defined injection patch, %v", err)
@@ -747,6 +749,8 @@ func MutateHandler(w http.ResponseWriter, req *http.Request) {
 
 	defaultNetSelection, defExist := getNetworkSelections(defaultNetworkAnnotationKey, pod, userDefinedPatch)
 	additionalNetSelections, addExists := getNetworkSelections(networksAnnotationKey, pod, userDefinedPatch)
+
+	glog.Infof("additional networks %s configured on the pod %s/%s", additionalNetSelections, pod.Namespace, pod.Name)
 
 	if defExist || addExists {
 		/* map of resources request needed by a pod and a number of them */
@@ -794,6 +798,7 @@ func MutateHandler(w http.ResponseWriter, req *http.Request) {
 					writeResponse(w, ar)
 					return
 				}
+				glog.Infof("resources %v requested on the pod %s/%s", resourceRequests, pod.Namespace, pod.Name)
 			}
 		}
 
@@ -806,7 +811,7 @@ func MutateHandler(w http.ResponseWriter, req *http.Request) {
 		}
 		var patch []jsonPatchOperation
 		if len(resourceRequests) == 0 {
-			glog.Infof("pod doesn't need any custom network resources")
+			glog.Infof("pod doesn't need any custom network resources %s/%s", pod.Namespace, pod.Name)
 		} else {
 			glog.Infof("honor-resources=%v", honorExistingResources)
 			if honorExistingResources {
@@ -876,7 +881,7 @@ func MutateHandler(w http.ResponseWriter, req *http.Request) {
 			patch = appendCustomizedPatch(patch, pod, userDefinedPatch)
 		}
 		patch = createNodeSelectorPatch(patch, pod.Spec.NodeSelector, desiredNsMap)
-		glog.Infof("patch after all mutations: %v", patch)
+		glog.Infof("patch after all mutations: %v for pod %s/%s", patch, pod.Namespace, pod.Name)
 
 		patchBytes, _ := json.Marshal(patch)
 		ar.Response.Patch = patchBytes
