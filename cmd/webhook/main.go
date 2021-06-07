@@ -15,23 +15,25 @@
 package main
 
 import (
-	"crypto/tls"
 	"context"
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"net/http"
 	"os"
+	"runtime/pprof"
+	"strconv"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	"github.com/fsnotify/fsnotify"
 	"github.com/golang/glog"
 	"github.com/k8snetworkplumbingwg/network-resources-injector/pkg/webhook"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
-	defaultClientCa              = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+	defaultClientCa               = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 	userDefinedInjectionConfigMap = "nri-user-defined-injections"
 )
 
@@ -48,6 +50,8 @@ func main() {
 	flag.Var(&clientCAPaths, "client-ca", "File containing client CA. This flag is repeatable if more than one client CA needs to be added to server")
 	resourceNameKeys := flag.String("network-resource-name-keys", "k8s.v1.cni.cncf.io/resourceName", "comma separated resource name keys --network-resource-name-keys.")
 	resourcesHonorFlag := flag.Bool("honor-resources", false, "Honor the existing requested resources requests & limits --honor-resources")
+	cpuprofile := flag.String("cpuprofile", "", "write cpu profile to file")
+	memprofileDir := flag.String("memprofile", "", "write memory profile to this directory")
 	flag.Parse()
 
 	if *port < 1024 || *port > 65535 {
@@ -65,6 +69,40 @@ func main() {
 	if namespace = os.Getenv("NAMESPACE"); namespace == "" {
 		namespace = "kube-system"
 	}
+
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			glog.Fatal(err)
+		}
+		defer f.Close()
+		if err := pprof.StartCPUProfile(f); err != nil {
+			glog.Fatal(err)
+		}
+		defer pprof.StopCPUProfile()
+	}
+
+	ticker := time.NewTicker(20 * time.Second)
+	done := make(chan bool)
+	go func() {
+		var index int
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				if *memprofileDir != "" {
+					index++
+					f, err := os.Create((*memprofileDir) + string(os.PathSeparator) + "memnri-" + strconv.Itoa(index) + ".mprof")
+					if err != nil {
+						glog.Fatal(err)
+					}
+					pprof.WriteHeapProfile(f)
+					f.Close()
+				}
+			}
+		}
+	}()
 
 	glog.Infof("starting mutating admission controller for network resources injection")
 
@@ -193,4 +231,7 @@ func main() {
 			webhook.SetCustomizedInjections(cm)
 		}
 	}
+
+	ticker.Stop()
+	done <- true
 }
